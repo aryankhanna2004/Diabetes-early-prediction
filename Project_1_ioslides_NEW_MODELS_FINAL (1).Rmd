@@ -1,0 +1,379 @@
+---
+logo: diabetes.png
+title: "
+  Project 1 - Early Detection of Diabetes"
+author: "Aryan Khanna, Baixi Jiao, Jasmine Kellett"
+date: "2024-03-20"
+output: ioslides_presentation
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(tidyverse)
+library(tidyr)
+library(kableExtra)
+library(knitr)
+library(ggplot2)
+library(gridExtra)
+library(caret)
+library(e1071) # SVM is in this package
+library(fastDummies)
+library(dplyr)
+library(DT)
+library(mlr)
+library(VIM)
+library(ggpubr)
+library(reshape2)
+library(mlr)
+
+theme_set(theme_bw())
+configureMlr(show.info=FALSE, show.learner.output=FALSE)
+data <- read.csv("diabetes_risk_prediction_dataset.csv", header = TRUE)
+```
+<!--
+Diabetes logo
+-->
+
+<style>
+.gdbar img {
+ width: 150px !important;
+ height: 90px !important;
+ margin: 30px 30px;
+}
+
+.gdbar {
+ width: 200px !important;
+ height: 100px !important;
+}
+
+</style>
+
+<!--
+Text format and font
+-->
+
+<style type="text/css">
+body,p,div,h1,h2,h3,h4,h5 {
+  color: black;
+  font-family: Modern Computer Roman;
+}
+slides > slide.title-slide hgroup h1 {
+    color: #3399FF
+}
+h2{
+color: #3399FF
+
+}
+
+
+</style>
+
+## Diabetes
+- Diabetes is a chronic (long-lasting) health condition that affects how your body turns food into energy.
+- Your body breaks down most of the food you eat into sugar (glucose) and releases it into your bloodstream. When your blood sugar goes up, it signals your pancreas to release insulin. Insulin acts like a key to let the blood sugar into your body’s cells for use as energy.
+- There isn’t a cure yet for diabetes, but losing weight, eating healthy food, and being active can really help.
+
+## Pre-Diabetes
+- In the United States, about 98 million adults—more than 1 in 3—have prediabetes.
+- More than 8 in 10 of them don’t know they have it. 
+- [Source](https://www.cdc.gov/diabetes/basics/diabetes.html)
+
+## Diabetes Classification Model
+We set out to investigate applications of diabetes research. We aimed to develop a classification model that can predict early-stage diabetes based on several medical predictor variables.
+
+
+## How the Data looks like
+```{r,out.width = 100}
+head(data)
+#As you can see in the table, it consists of all kinds of possible diabetes symtoms and also whether the person has diabetes or not.
+```
+
+## Dataset
+```{r}
+summary(data)
+```
+
+## Class Distribution
+```{r}
+# Visualize the distribution of the outcome variable 'Class'
+ggplot(data, aes(x = class)) + 
+  geom_bar(fill = 'steelblue') +
+  labs(title = "Distribution of Diabetes Classification", x = "Class", y = "Count")
+```
+
+## Numerical Variables Distribution
+```{r}
+# Assuming 'diabetes_data' is your dataset
+numerical_vars <- data %>% 
+  select(where(is.numeric))
+
+# Melting the data to long format for easier plotting with ggplot2
+long_data <- pivot_longer(numerical_vars, cols = everything())
+
+# Plotting
+ggplot(long_data, aes(x = value)) +
+  geom_histogram(bins = 30, fill = 'skyblue', color = 'black') +
+  theme_minimal() +
+  facet_wrap(~name, scales = 'free') +
+  labs(y = "Frequency")
+
+```
+
+
+## Relationship Between Attributes and Class
+Here we discover higher proportions within the positive diabetes criteria, for the attributes: gender, polydispia, polyphagia, sudden weight loss, partial paresis, and general weakness. This finding is to be expected since all of the variables listed thus far and known to have some relationship with a positive diagnosis. However, the proportion within the alopecia category was suprising. Since both type 1 and 2 diabetes often induces hair loss and makes individuals prone to developing alopecia conditions.
+```{r,echo = FALSE, fig.width=8,fig.height=3.5}
+
+diabetes_data <- data %>%
+  mutate_if(is.character, as.factor)
+
+# Convert dataset to long format
+long_data <- pivot_longer(diabetes_data, cols = -c(Age, class))
+
+# Generate plots
+ggplot(long_data, aes(x = value, fill = class)) + 
+  geom_bar(position = "fill") + 
+  theme_minimal() +
+  labs(y = "Proportion") + 
+  facet_wrap(~name, scales = "free_x", nrow = 2) + 
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.title = element_text(size = 12),
+        legend.text = element_text(size = 10))
+```
+
+## Boxplot Examining Age and Class
+```{r, fig.width=8,fig.height=3}
+data %>% ggplot(aes(class,Age,fill = class)) + 
+  geom_boxplot(width = 0.4,outlier.color = "red") + 
+  scale_fill_brewer(palette = "Set2" ) +
+  theme(legend.position = "none") + 
+  stat_compare_means(method = "t.test",label.x = 1.4, label.y = 80)
+```
+
+Based on the observations of the grouped boxplots and the results of the t-test, we found that age was significant for the predicted categories. Specifically, there is a difference in the medians of the negative and positive age groups, with the positive group having a larger median than the negative group. This suggests that age plays an important role in differentiating categories.
+
+## Significance Testing
+```{r,fig.width=8,fig.height=3.5}
+data %>% 
+  select(-1) %>% 
+  pivot_longer(cols = 1:15) %>% 
+  ggplot(aes(x=value,fill = class)) + 
+  geom_bar(position = position_dodge(width = 0.6),width = 0.5) + 
+  labs(x = "") + 
+  scale_fill_brewer(palette = "Set2") +
+  facet_wrap(~name,scales = "free",ncol = 5) + 
+  theme(legend.position = "bottom")
+```
+According to the grouped bar chart, we found that the variables "delayed healing", "Genital thrush", "Obesity" and "ltching" have no significant difference in the proportion of distribution in different categories. This suggests that these four variables may not play an important role in prediction.
+
+
+```{r splitdata,echo =FALSE }
+data_reduce <- data %>% 
+  select(-c('delayed.healing','Obesity','Itching','class')) %>% 
+  mutate_if(is.character,as.factor) %>% 
+  fastDummies::dummy_cols() %>% 
+  select(-c(2:13)) %>% 
+  mutate(class = as.factor(data$class))
+
+set.seed(123)
+index <- 1:nrow(data_reduce)
+test_set_index <- sample(index, trunc(length(index)/3))
+test_set <- data_reduce[test_set_index,]
+train_set <- data_reduce[-test_set_index,]
+```
+## Model Building and Evaluation
+We selected two models for our analysis: Support Vector Machine (SVM) and Neural Network. These models were chosen due to their ability to handle complex non-linear relationships between features.
+
+### SVM
+We used SVM model, also known as support vector machine model. 
+SVM models are supervised machine learning models which can be used to solve a multitude of problems by performing data transformations. 
+It is our hope that this model will effectively make a prediction model.
+
+## 1
+```{r}
+set.seed(123)
+# create a classification task
+task_f <- makeClassifTask(id = "diabetes_class_F", 
+                          data = train_set,
+                          target = "class",
+                          positive = "Positive")
+# create a svm learner
+svm_lrn_f <- makeLearner("classif.svm", 
+                         id = "svm_full", 
+                         predict.type = "prob")
+
+svm_mod_f <- train(svm_lrn_f,task_f)
+train_svm_f <- predict(svm_mod_f, task_f)
+test_svm_f <- predict(svm_mod_f, newdata=test_set); 
+
+cat("Training set accuracy: ", performance(train_svm_f, measures=acc), "\n")
+cat("Test set accuracy: ", performance(test_svm_f, measures=acc), "\n")
+
+d = generateThreshVsPerfData(train_svm_f, measures = list(fpr, tpr, mmce))
+plotROCCurves(d)
+plotThreshVsPerf(d)
+```
+
+According to the above two figures, the training set's AUC for the support vector machine with its default parameters is essentially close to 1, and the threshold of 0.5 was chosen appropriately. At this point, the training set's accuracy is 0.9769452, while the test set's accuracy rate is 0.9537572.
+
+
+## Here begin resampling the data and setting discrete parameters.
+```{r}
+set.seed(123)
+# Define the resampling strategy
+rdesc <- makeResampleDesc(method = "CV", iters = 10) 
+# discrete parameter sets
+discrete_ps <- makeParamSet(
+  makeNumericParam("cost", lower = 0.1, upper = 3),
+  makeNumericParam("gamma", lower = 0.1, upper = 3)
+)
+
+ctrl_d <- makeTuneControlGrid()
+
+res_svm <- tuneParams(svm_lrn_f, 
+                      task = task_f, 
+                      resampling = rdesc, 
+                      par.set = discrete_ps,
+                      control = ctrl_d, 
+                      measures = list(acc, mmce), 
+                      show.info = FALSE)
+res_svm
+```
+
+The ideal settings for the 10-fold cross-validation are {cost=0.422; gamma=0.1}, and the associated average accuracy rate is 0.9653782.
+
+## 3
+
+The accuracy rate on the test set is 0.9595376, while the accuracy rate on the training set is 0.9711816, as can be observed from the above findings; the performance of the optimized SVM is marginally better on the test set. This is because there is less overfitting on the training set, which increases accuracy and generalization capacity on the test set.
+```{r}
+set.seed(123)
+svm_lrn_f_tuned <- setHyperPars(svm_lrn_f, par.vals = res_svm$x)
+svm_mod_f_tuned <- train(svm_lrn_f_tuned, task_f)
+train_svm_f_tuned <- predict(svm_mod_f_tuned, task_f); 
+test_svm_f_tuned <- predict(svm_mod_f_tuned, newdata=test_set); 
+
+cat("Training set accuracy: ", performance(train_svm_f_tuned, measures=acc), "\n")
+cat("Test set accuracy: ", performance(test_svm_f_tuned, measures=acc), "\n")
+
+d = generateThreshVsPerfData(train_svm_f_tuned, measures = list(fpr, tpr, mmce))
+plotROCCurves(d)
+plotThreshVsPerf(d)
+```
+
+### Neural Network
+Neural Networks are powerful computational models that mimic the way neurons in the human brain operate, making them particularly effective for capturing complex patterns.
+Here we attempt to build a second model which may be more effective than the SVM model.
+```{r}
+set.seed(123)
+nn_lrn = makeLearner("classif.nnet",
+                    predict.type = "prob")
+
+nn_mod <- train(nn_lrn,task_f)
+train_nn <- predict(nn_mod, task_f)
+test_nn <- predict(nn_mod, newdata = test_set)
+
+cat("Training set accuracy: ", performance(train_nn, measures = acc), "\n")
+cat("Test set accuracy: ", performance(test_nn, measures = acc), "\n")
+
+d = generateThreshVsPerfData(train_nn, measures = list(fpr, tpr, mmce))
+plotROCCurves(d)
+plotThreshVsPerf(d)
+```
+
+The aforementioned data demonstrate how much poorer the neural network's default performance is than the support vector machine's. As of right now, the test set's accuracy rate is 0.8843931, while the training set's accuracy rate is 0.8962536.
+
+## 1
+```{r, fig.width=8,fig.height=3.5}
+# getParamSet(makeLearner("classif.nnet"))
+
+# Define the resampling strategy
+set.seed(123)
+
+# discrete parameter sets
+discrete_ps <- makeParamSet(
+  makeDiscreteParam("size", values = c(2:10)),
+  makeDiscreteParam("decay", values = 10^-(1:5)),
+  makeDiscreteParam("maxit", values = 10000L) 
+)
+
+res_nn <- tuneParams(nn_lrn, 
+                      task = task_f, 
+                      resampling = rdesc,
+                      par.set = discrete_ps,
+                      control = ctrl_d,
+                      measures = list(acc, mmce))
+res_nn
+```
+
+For the neural network, I chose to optimize three parameters. Under 10-fold cross-validation, the optimal parameter combination is `size=10; decay=0.001; maxit=10000`, and the corresponding average accuracy rate is 0.9684874.
+
+## 2
+```{r, fig.width=8,fig.height=3.5}
+set.seed(123)
+nn_lrn_tuned <- setHyperPars(nn_lrn, par.vals = res_nn$x)
+nn_mod_tuned <- train(nn_lrn_tuned, task_f)
+train_nn_tuned <- predict(nn_mod_tuned, task_f); 
+test_nnf_tuned <- predict(nn_mod_tuned, newdata=test_set); 
+
+cat("Training set accuracy: ", performance(train_nn_tuned, measures=acc), "\n")
+cat("Test set accuracy: ", performance(test_nnf_tuned, measures=acc), "\n")
+
+d = generateThreshVsPerfData(train_nn_tuned, measures = list(fpr, tpr, mmce))
+plotROCCurves(d)
+
+plotThreshVsPerf(d)
+```
+
+The optimized neural network performs better than the neural network with default settings (size = 3), with an accuracy rate of 1 on the training set and 0.9248555 on the test set.
+
+## Model Evalutaions
+
+Here we will be begin our analysis on the comparison of both models to find the most effective one.
+```{r}
+set.seed(123)
+# create benchmark tasks
+svm_nn_task <- makeClassifTask(id = "svm-nn", 
+                               data = train_set, 
+                               target = "class",
+                               positive = "Positive")
+# create learners for svm and nn
+lrns = list(makeLearner("classif.svm", kernel = "radial", cost=0.422, gamma=0.1),
+            makeLearner("classif.nnet", size=10, decay=0.001, maxit=10000L))
+
+# conduct the benchmark
+bmr = benchmark(lrns, svm_nn_task, rdesc, measures=list(acc, mmce, ber))
+bmr
+```
+
+## plot
+```{r}
+plotBMRBoxplots(bmr, measure = acc)
+```
+
+## outcome
+```{r,fig.height=3.5}
+perf <- getBMRPerformances(bmr, as.df=TRUE)
+p1<-ggplot(perf, aes(acc, colour = learner.id)) +
+  geom_density() +
+  labs(title="Accuracy")
+
+p2<-ggplot(perf, aes(mmce, colour = learner.id)) +
+  geom_density() +
+  labs(title="Mean misclassification rate")
+p3<-ggplot(perf, aes(ber, colour = learner.id)) +
+  geom_density() +
+  labs(title="Balanced error rate")
+library(gridExtra)
+grid.arrange(p1,p2,p3,ncol=1)
+```
+Based on the outcomes of 10-fold cross-validation, it can be inferred that the two models' performance on the training set is almost identical. The neural network performs marginally better, although it frequently performs worse on the test set because to its propensity for overfitting.
+
+
+## Conclusion
+- Through data exploration, we identified relationships between 16 characteristics and patient health status. 
+- Using visualization and statistical tests, we identified three features that are irrelevant to predictions: "ltching", "delayed.healing", and "Obesity". 
+- We selected two machine learning models, support vector machine and neural network, and tuned the hyperparameters to explore different results. 
+- It was found that the neural network model was slightly better, but it was also prone to overfitting. 
+- Through the accuracy of the test set, The support vector machine was found to be more accurate; overall, both models performed well and we recommend the support vector machine for predicting patient health.
+
